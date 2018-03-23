@@ -26,7 +26,7 @@ static int g_freq_current = 3;
 static SceUID g_hook[5];
 static tai_hook_ref_t g_hook_ref[5];
 
-static long long g_frametime_target = 1;
+static long g_frametime_target = 1;
 static int g_fps_target = 1;
 
 static SceUInt64 g_tick_last = 1;
@@ -48,9 +48,8 @@ int sceDisplaySetFrameBuf_patched(const SceDisplayFrameBuf *pParam, int sync)
     updateFramebuf(pParam);
     SceUInt64 tick_now = sceKernelGetProcessTimeWide();
 
-    long long frametime = tick_now - g_tick_last;
-    // FT trigger point
-    long long frametime_trigger = g_frametime_target + g_drop_frametime_diff;
+    long frametime = tick_now - g_tick_last;
+    long frametime_trigger = g_frametime_target + g_drop_frametime_diff;
     int fps = ((SECOND*10) / frametime + 5) / 10; // rounding hack
 
     // Up
