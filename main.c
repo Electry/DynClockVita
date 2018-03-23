@@ -100,11 +100,12 @@ int scePowerSetGpuClockFrequency_patched(int freq)
 {
     return TAI_CONTINUE(int, g_hook_ref[3], g_freq_list[g_freq_current][2]);
 }
-
+/*
 int scePowerSetGpuXbarClockFrequency_patched(int freq)
 {
     return TAI_CONTINUE(int, g_hook_ref[4], g_freq_list[g_freq_current][3]);
 }
+*/
 
 void _start() __attribute__ ((weak, alias ("module_start")));
 int module_start(SceSize argc, const void *args)
@@ -136,11 +137,13 @@ int module_start(SceSize argc, const void *args)
                                       0x717DB06C,
                                       scePowerSetGpuClockFrequency_patched);
 
+    /*
     g_hook[4] = taiHookFunctionImport(&g_hook_ref[4],
                                       TAI_MAIN_MODULE,
                                       TAI_ANY_LIBRARY,
                                       0xA7739DBE,
                                       scePowerSetGpuXbarClockFrequency_patched);
+    */
 
     return SCE_KERNEL_START_SUCCESS;
 }
@@ -155,8 +158,10 @@ int module_stop(SceSize argc, const void *args)
         taiHookRelease(g_hook[2], g_hook_ref[2]);
     if (g_hook[3] >= 0)
         taiHookRelease(g_hook[3], g_hook_ref[3]);
+    /*
     if (g_hook[4] >= 0)
         taiHookRelease(g_hook[4], g_hook_ref[4]);
+    */
 
     return SCE_KERNEL_STOP_SUCCESS;
 }
