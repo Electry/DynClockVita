@@ -32,7 +32,7 @@ static int g_fps_target = 1;
 static SceUInt64 g_tick_last = 1;
 static SceUInt64 g_tick_last_drop = 1;
 
-static long g_drop_frametime_diff = 200; // 0.2ms
+static long g_drop_frametime_diff = 1000; // 1ms
 static long g_drop_cooldown = SECOND * 5;
 
 void freqApply()
