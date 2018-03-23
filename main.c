@@ -10,7 +10,7 @@
 #define SECOND 1000000
 
 #define FREQ_LIST_N 9
-static int g_freq_list[9][4] = {
+static int g_freq_list[FREQ_LIST_N][4] = {
     {444, 222, 222, 166},
     {366, 222, 222, 166},
     {333, 222, 222, 166},
@@ -71,7 +71,7 @@ int sceDisplaySetFrameBuf_patched(const SceDisplayFrameBuf *pParam, int sync)
 
     // Calculate target FPS and frametime
     g_fps_target = fps > 35 ? 60 : 30;
-    g_frametime_target = 1000000 / g_fps_target;
+    g_frametime_target = SECOND / g_fps_target;
 
     // Print shit on screen
     drawStringF(5, 5, "%d/%d [%d|%d]",
