@@ -33,7 +33,7 @@ static SceUInt64 g_tick_last = 1;
 static SceUInt64 g_tick_last_drop = 1;
 
 static long g_drop_frametime_diff = 1000; // 1ms
-static long g_drop_cooldown = SECOND * 5;
+static long g_drop_cooldown = SECOND * 3;
 
 void freqApply()
 {
