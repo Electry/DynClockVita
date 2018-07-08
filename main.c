@@ -13,59 +13,76 @@
 #define FREQ_STEP_N  8
 #define FREQ_TABLE_N 9
 
-#define FREQ_CPU_N   8
-#define FREQ_BUS_N   4
-#define FREQ_GPU_N   4
-#define FREQ_XBAR_N  3
+#define FREQ_CPU_MAX_N   8
+#define FREQ_BUS_MAX_N   4
+#define FREQ_GPU_MAX_N   4
+#define FREQ_XBAR_MAX_N  3
 
 #define COLOR_TEXT_SELECT 0x004444FF
-#define COLOR_TEXT 0x00FFFFFF
+#define COLOR_TEXT        0x00FFFFFF
 
+// Manual mode
 static int g_freq_step[FREQ_STEP_N] = {
-    /*0*/ 55, /*1*/111, /*2*/166, /*3*/222,
-    /*4*/266, /*5*/333, /*6*/366, /*7*/444
+    /*0*/55,
+    /*1*/111,
+    /*2*/166,
+    /*3*/222,
+    /*4*/266,
+    /*5*/333,
+    /*6*/366,
+    /*7*/444
 };
+// Dynamic mode
 static int g_freq_table[FREQ_TABLE_N][3] = {
-    {444, 222, 222},
-    {366, 222, 222},
-    {333, 222, 222},
-    {333, 166, 166},
-    {266, 166, 166},
-    {222, 166, 166},
-    {166, 111, 111},
+//   CPU, BUS, GPU
+    { 55,  55,  55},
     {111, 111, 111},
-    { 55,  55,  55}
+    {166, 111, 111},
+    {222, 166, 166},
+    {266, 166, 166},
+    {333, 166, 166},
+    {333, 222, 222},
+    {366, 222, 222},
+    {444, 222, 222}
 };
-static int g_freq_current_table   = 4;
-static int g_freq_current_step[4] = { 0,  0,  0,  0};
-static int g_freq_game[4]         = {266, 166, 166, 111};
+// Default mode
+static int g_freq_default[4] = {
+//  CPU, BUS, GPU, XBAR
+	266, 166, 166, 111
+};
 
-static int g_mode[4] = {0, 0, 0, 1}; // 0 = dynamic, 1 = game, 2 = manual
-static int g_menu    = 0; // 0 = none, 1 = minimal, 2 = full
+static int g_freq_current_table   = 4;               // g_freq_table index (Dynamic mode)
+static int g_freq_current_step[4] = {0,  0,  0,  0}; // g_freq_step index (CPU, BUS, GPU, XBAR) (Manual mode)
+
+static int g_mode[4] = {0, 0, 0, 1}; // 0 = dynamic, 1 = default, 2 = manual (CPU, BUS, GPU, XBAR)
+static int g_menu    = 0;            // 0 = none, 1 = minimal, 2 = full
+
+static long g_frametime_target   = 33333;
+static int g_fps_target          = 30;
+static int g_fps_target_stable   = 30;
+static long g_fps_target_n       = 0;
+
+static SceUInt32 g_tick_last    = 1; // tick of last frame
+static int g_frame_n_since_change   = 0; // num of frames since last freq change
+
+static long g_drop_frametime_diff        = SECOND * 0.002f; // 2ms - minimal frametime loss for freq bump up
+static long g_frame_n_cooldown_up        = 2;               // wait for n frames before bumping up again
+static long g_frame_n_cooldown_down      = 30;              // wait for n framew before bumping down again
+
+static long g_buttons_old = 0;
+static int g_selected     = 0;
 
 static SceUID g_hook[9];
 static tai_hook_ref_t g_hook_ref[9];
-
-static long g_frametime_target = 1;
-static int g_fps_target = 1;
-
-static SceUInt64 g_tick_last = 1;
-static SceUInt64 g_tick_last_drop = 1;
-
-static long g_drop_frametime_diff = SECOND * 0.002f; // 2ms
-static long g_drop_cooldown = SECOND * 3;
-
-static long g_buttons_old = 0;
-static int g_selected = 0;
 
 int getFreq(int index)
 {
     // Dynamic
     if (index != 3 && g_mode[index] == 0)
         return g_freq_table[g_freq_current_table][index];
-    // Game
+    // Default
     else if ((index == 3 && g_mode[index] == 0) || g_mode[index] == 1)
-        return g_freq_game[index];
+        return g_freq_default[index];
     // Manual
     else
         return g_freq_step[g_freq_current_step[index]];
@@ -86,6 +103,7 @@ void checkButtons(SceCtrlData *ctrl)
 {
     unsigned long pressed = ctrl->buttons & ~g_buttons_old;
 
+    // Toggle menu
     if (ctrl->buttons & SCE_CTRL_SELECT) {
         if (g_menu < 2 && (pressed & SCE_CTRL_UP)) {
             g_menu++;
@@ -95,14 +113,16 @@ void checkButtons(SceCtrlData *ctrl)
         }
     }
 
+    // Full menu open
     if (g_menu == 2) {
+        // Move up/down in menu
         if (g_selected > 0 && (pressed & SCE_CTRL_UP))
             g_selected--;
         else if (g_selected < 3 && (pressed & SCE_CTRL_DOWN))
             g_selected++;
 
         if (pressed & SCE_CTRL_RIGHT) {
-            // Auto, Game
+            // Dynamic, Default
             if (g_mode[g_selected] < 2) {
                 g_mode[g_selected]++;
 
@@ -111,10 +131,11 @@ void checkButtons(SceCtrlData *ctrl)
                     g_freq_current_step[g_selected] = 0;
             // Manual
             } else if (g_mode[g_selected] == 2) {
-                if ((g_freq_current_step[g_selected] < FREQ_CPU_N - 1 && g_selected == 0) ||
-                    (g_freq_current_step[g_selected] < FREQ_BUS_N - 1 && g_selected == 1) ||
-                    (g_freq_current_step[g_selected] < FREQ_GPU_N - 1 && g_selected == 2) ||
-                    (g_freq_current_step[g_selected] < FREQ_XBAR_N - 1 && g_selected == 3))
+                // Freq up
+                if ((g_freq_current_step[g_selected] < FREQ_CPU_MAX_N - 1 && g_selected == 0) ||
+                    (g_freq_current_step[g_selected] < FREQ_BUS_MAX_N - 1 && g_selected == 1) ||
+                    (g_freq_current_step[g_selected] < FREQ_GPU_MAX_N - 1 && g_selected == 2) ||
+                    (g_freq_current_step[g_selected] < FREQ_XBAR_MAX_N - 1 && g_selected == 3))
                     g_freq_current_step[g_selected]++;
             }
 
@@ -122,15 +143,15 @@ void checkButtons(SceCtrlData *ctrl)
         }
 
         if (pressed & SCE_CTRL_LEFT) {
-            // Game -> Auto
+            // Default (1) -> Dynamic (0)
             if (g_mode[g_selected] == 1 && g_selected != 3)
                 g_mode[g_selected]--;
-            // Manual
+            // Manual (2)
             else if (g_mode[g_selected] == 2) {
-                // -> Game
+                // -> Default (1)
                 if (g_freq_current_step[g_selected] == 0)
                     g_mode[g_selected]--;
-                // Down
+                // Freq down
                 else if (g_freq_current_step[g_selected] > 0)
                     g_freq_current_step[g_selected]--;
             }
@@ -145,7 +166,7 @@ void checkButtons(SceCtrlData *ctrl)
 int sceDisplaySetFrameBuf_patched(const SceDisplayFrameBuf *pParam, int sync)
 {
     updateFramebuf(pParam);
-    SceUInt64 tick_now = sceKernelGetProcessTimeWide();
+    SceUInt32 tick_now = sceKernelGetProcessTimeLow();
 
     long frametime = tick_now - g_tick_last;
     long frametime_trigger = g_frametime_target + g_drop_frametime_diff;
@@ -153,19 +174,19 @@ int sceDisplaySetFrameBuf_patched(const SceDisplayFrameBuf *pParam, int sync)
 
     // Dynamic
     if (g_mode[0] == 0 || g_mode[1] == 0 || g_mode[2] == 0) {
-        // Up
-        if (frametime > frametime_trigger && tick_now - g_tick_last_drop > frametime) {
-            if (g_freq_current_table > 0)
-                g_freq_current_table--;
-            g_tick_last_drop = tick_now;
+        // Bump up
+        if (frametime > frametime_trigger && g_frame_n_since_change > g_frame_n_cooldown_up) {
+            if (g_freq_current_table < FREQ_TABLE_N - 1)
+                g_freq_current_table++;
+            g_frame_n_since_change = 0;
 
             applyFreq();
         }
-        // Down
-        else if (tick_now - g_tick_last_drop > g_drop_cooldown) {
-            if (g_freq_current_table < FREQ_TABLE_N - 1)
-                g_freq_current_table++;
-            g_tick_last_drop = tick_now;
+        // Bump down
+        else if (g_frame_n_since_change > g_frame_n_cooldown_down) {
+            if (g_freq_current_table > 0)
+                g_freq_current_table--;
+            g_frame_n_since_change = 0;
 
             applyFreq();
         }
@@ -173,13 +194,21 @@ int sceDisplaySetFrameBuf_patched(const SceDisplayFrameBuf *pParam, int sync)
 
     // Calculate target FPS and frametime
     g_fps_target = fps > 35 ? 60 : 30;
-    g_frametime_target = SECOND / g_fps_target;
+    if (g_fps_target == g_fps_target_stable) {
+        g_fps_target_n = 0;
+    } else {
+        g_fps_target_n++;
 
+        if (g_fps_target_n > 10) {
+            g_fps_target_stable = g_fps_target;
+            g_frametime_target = SECOND / g_fps_target_stable;
+        }
+    }
     // Print shit on screen
     if (g_menu == 1) {
         drawStringF(0, 0, "%d/%d [%d|%d]",
                     fps,
-                    g_fps_target,
+                    g_fps_target_stable,
                     scePowerGetArmClockFrequency(),
                     scePowerGetGpuClockFrequency());
     } else if (g_menu == 2) {
@@ -187,45 +216,46 @@ int sceDisplaySetFrameBuf_patched(const SceDisplayFrameBuf *pParam, int sync)
 
         drawStringF(0, 0, "%d/%d [%d|%d|%d|%d]",
                     fps,
-                    g_fps_target,
+                    g_fps_target_stable,
                     scePowerGetArmClockFrequency(),
                     scePowerGetBusClockFrequency(),
                     scePowerGetGpuClockFrequency(),
                     scePowerGetGpuXbarClockFrequency());
-        drawStringF(0, 20, "            ");
+        drawStringF(0, 20, "               ");
 
-        sprintf(buf, " %d", getFreq(0));
+        sprintf(buf, "%d", getFreq(0));
         setTextColor(COLOR_TEXT);
         drawStringF(0, 40, "CPU:  ");
         if (g_selected == 0)
             setTextColor(COLOR_TEXT_SELECT);
-        drawStringF(70, 40, "[%s]", (g_mode[0] == 0 ? "Auto" : (g_mode[0] == 1 ? "Game" : buf)));
+        drawStringF(70, 40, "[%s]", (g_mode[0] == 0 ? "Dynamic" : (g_mode[0] == 1 ? "Default" : buf)));
 
-        sprintf(buf, " %d", getFreq(1));
+        sprintf(buf, "%d", getFreq(1));
         setTextColor(COLOR_TEXT);
         drawStringF(0, 60, "BUS:  ");
         if (g_selected == 1)
             setTextColor(COLOR_TEXT_SELECT);
-        drawStringF(70, 60, "[%s]", (g_mode[1] == 0 ? "Auto" : (g_mode[1] == 1 ? "Game" : buf)));
+        drawStringF(70, 60, "[%s]", (g_mode[1] == 0 ? "Dynamic" : (g_mode[1] == 1 ? "Default" : buf)));
 
-        sprintf(buf, " %d", getFreq(2));
+        sprintf(buf, "%d", getFreq(2));
         setTextColor(COLOR_TEXT);
         drawStringF(0, 80, "GPU:  ");
         if (g_selected == 2)
             setTextColor(COLOR_TEXT_SELECT);
-        drawStringF(70, 80, "[%s]", (g_mode[2] == 0 ? "Auto" : (g_mode[2] == 1 ? "Game" : buf)));
+        drawStringF(70, 80, "[%s]", (g_mode[2] == 0 ? "Dynamic" : (g_mode[2] == 1 ? "Default" : buf)));
 
-        sprintf(buf, " %d", getFreq(3));
+        sprintf(buf, "%d", getFreq(3));
         setTextColor(COLOR_TEXT);
         drawStringF(0, 100, "XBAR: ");
         if (g_selected == 3)
             setTextColor(COLOR_TEXT_SELECT);
-        drawStringF(70, 100, "[%s]", (g_mode[3] == 1 ? "Game" : buf));
+        drawStringF(70, 100, "[%s]", (g_mode[3] == 1 ? "Default" : buf));
 
         setTextColor(COLOR_TEXT);
     }
 
     g_tick_last = tick_now;
+    g_frame_n_since_change++;
 
     return TAI_CONTINUE(int, g_hook_ref[0], pParam, sync);
 }
@@ -275,8 +305,7 @@ int sceCtrlReadBufferPositive2_patched(int port, SceCtrlData *ctrl, int count)
 void _start() __attribute__ ((weak, alias ("module_start")));
 int module_start(SceSize argc, const void *args)
 {
-    g_tick_last = sceKernelGetProcessTimeWide();
-    g_tick_last_drop = g_tick_last;
+    g_tick_last = sceKernelGetProcessTimeLow();
 
     g_hook[0] = taiHookFunctionImport(&g_hook_ref[0],
                                       TAI_MAIN_MODULE,
