@@ -67,7 +67,7 @@ static long g_frame_n_since_down = 0;
 
 static long g_drop_frametime_diff        = SECOND * 0.002f; // 2ms - minimal frametime loss for freq bump up
 static long g_frame_n_cooldown_up        = 1;               // wait for n frames before bumping up again
-static long g_frame_n_cooldown_down      = 30;              // wait for n framew before bumping down again
+static long g_frame_n_cooldown_down      = 120;             // wait for n frames before bumping down again
 
 static long g_buttons_old = 0;
 static int g_selected     = 0;
